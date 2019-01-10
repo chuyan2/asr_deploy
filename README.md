@@ -22,8 +22,8 @@ ctcdecode == 0.3      从166:/home/chuyan/ctcdecode/拷贝 运行其中的run.sh
 ```
 ### 模型文件：
 ```
-将166:/home/chuyan/ds_bu/model/tts200000/tts200t.pth 文件拷贝至model/nn/
-将166:/home/chuyan/kenlm/build/14m_4.arpa 文件拷贝至model/lm/
+nn:  166:/home/chuyan/asr_deploy/model/nn/model.pth
+lm:  166:/home/chuyan/kenlm/build/14m_4.arpa 
 ```
 ### configs/test.config 配置：
 ```
