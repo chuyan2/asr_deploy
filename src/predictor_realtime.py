@@ -1,13 +1,16 @@
 import torch
-from data_loader import SpectrogramParser
 from decoder import GreedyDecoder
-#from model import DeepSpeech
 from model_realtime import DeepSpeech
-from data_loader import load_audio
+from data_loader import load_audio,SpectrogramParser
 import os
 import configparser 
 import numpy as np
 import time
+import scipy.signal
+import librosa
+windows = {'hamming': scipy.signal.hamming, 'hann': scipy.signal.hann, 'blackman': scipy.signal.blackman,
+           'bartlett': scipy.signal.bartlett}
+
 def decode_results(decoded_output):
     results = {"output":[]}
     for b in range(len(decoded_output)):
@@ -15,6 +18,28 @@ def decode_results(decoded_output):
             result = {'transcription': decoded_output[b][pi]}
             results['output'].append(result)
     return results
+
+
+
+class SpectrogramParserRealtime(SpectrogramParser):
+    def __init__(self, audio_conf):
+
+        super(SpectrogramParserRealtime,self).__init__(audio_conf)
+        self.audio_np_buffer = np.array([])
+   
+    def flush_audio_buffer(self):
+        self.audio_np_buffer = np.array([])
+        
+    def parse_audio(self,x):
+        appended = np.append(self.audio_np_buffer,x)
+        current_len = len(appended)
+        if current_len < self.n_fft:
+            self.audio_np_buffer = appended
+            return None
+        end_ix = int(current_len/self.hop_length)*self.hop_length
+        spect = self.wav_vector2nn_input(appended[:end_ix])
+        self.audio_np_buffer = appended[end_ix-self.hop_length:]
+        return spect 
 
 
 class Predictor(object):
@@ -45,6 +70,7 @@ class Predictor(object):
             self.model = DeepSpeech.load_model(model_path, False)
             
         self.model.eval()
+        #self.model.train()
         labels = DeepSpeech.get_labels(self.model)
         audio_conf = DeepSpeech.get_audio_conf(self.model)
         if lm_path:
@@ -54,8 +80,7 @@ class Predictor(object):
                                  beam_width=beam_width, num_processes=lm_workers)
         else:
             self.decoder = GreedyDecoder(labels, blank_index=labels.index('_'))
-        #self.parser = SpectrogramParser(audio_conf, normalize=True)
-        self.parser = SpectrogramParser(audio_conf)
+        self.parser = SpectrogramParserRealtime(audio_conf)
 
         self.t_kernel_length = 11
         self.t_stride = 2
@@ -64,14 +89,6 @@ class Predictor(object):
         self._realtime_nn_out = torch.Tensor() 
         self._decoded_len = 0
 
-
-    def _predict(self, audio_path):
-        spect = self.parser.parse_audio(audio_path).contiguous()
-        spect = spect.view(1, 1, spect.size(0), spect.size(1))
-        out = self.model(spect,1111)
-        decoded_output, _ = self.decoder.decode(out.data)
-        transcriptions = decode_results(self.model, decoded_output)['output'][0]['transcription']
-        return transcriptions
 
     def _control_conv_input(self,slice_data):
         assert slice_data.dim() == 2
@@ -89,25 +106,32 @@ class Predictor(object):
         self._realtime_nn_out = torch.Tensor()
   
     def predict_realtime(self,x,tail_padding):
-        x = self._control_conv_input(self.parser.parse_audio_realtime(x).contiguous())
-        out,self._realtime_info = self.model(x,tail_padding,self._realtime_info)    
-        self._realtime_nn_out = torch.cat((self._realtime_nn_out,out),1)
+        x = self._control_conv_input(self.parser.parse_audio(x).contiguous())
+#        self.model.train()
+#        out1 = self.model(x,tail_padding,self._realtime_info)    
+
+        out2,self._realtime_info = self.model(x,tail_padding,self._realtime_info)    
+        self._realtime_nn_out = torch.cat((self._realtime_nn_out,out2),1)
 
     
     def realtime_res(self):
         if len(self._realtime_nn_out) == 0:
             return ''
-        #t1=time.time()
+        t1=time.time()
         decoded_output, _ = self.decoder.decode(self._realtime_nn_out.data)
         transcriptions = decode_results(decoded_output)['output'][0]['transcription']
-        #print('txt:',transcriptions,'consumed',time.time()-t1)
+        print('txt:',transcriptions,'consumed',time.time()-t1)
         return transcriptions 
 
-    def predict(self,audio_path):
+    def predict(self,audio_path,label=None):
         x = load_audio(audio_path)
         self.predict_realtime(x,True)
         decoded_output, _ = self.decoder.decode(self._realtime_nn_out.data)
         transcriptions = decode_results(decoded_output)['output'][0]['transcription']
         self.flush_realtime()
-        return transcriptions
+        if label is None:
+            return transcriptions
+        else:
+            cer = self.decoder.cer(label,transcriptions)/float(len(label))
+            return transcriptions,cer
 

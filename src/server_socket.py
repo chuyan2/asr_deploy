@@ -22,7 +22,7 @@ class Sender():
         sk.listen(3)
         self.cs,addr2 = sk.accept()
         print('sk2 lined to %s'% str(addr2))
-        
+
         self.wav_data=bytes()
         self.sample_width = 2
 
@@ -33,9 +33,8 @@ class Sender():
         #increase energy_threshold will easier to cut
         self.energy_threshold = 0.83
         
-        self.wname = 0
+        #self.wname = 0
         #self.wav_create()
-        self._process_ix = 0
     def wav_create(self):
         self.wf=wave.open('wav_tmp/'+str(self.wname)+'.wav','wb')
         self.wf.setnchannels(1)
@@ -81,7 +80,7 @@ class Sender():
             self.predictor.flush_realtime()
 
             #self.wf.close()
-            self.wname += 1
+            #self.wname += 1
             #self.wav_create()
 
     def run(self):
